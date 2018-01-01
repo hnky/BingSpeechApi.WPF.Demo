@@ -34,10 +34,11 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="SpeechClient, Version=0.0.0.0, Culture=neutral, PublicKeyToken=720c26922c782415, processorArchitecture=AMD64">
-      <HintPath>..\packages\Microsoft.ProjectOxford.SpeechRecognition-x64.1.0.0.7\lib\SpeechClient.dll</HintPath>
+    <Reference Include="SpeechClient, Version=0.0.0.0, Culture=neutral, PublicKeyToken=720c26922c782415, processorArchitecture=x86">
+      <HintPath>..\packages\Microsoft.ProjectOxford.SpeechRecognition-x86.1.0.0.7\lib\SpeechClient.dll</HintPath>
     </Reference>
     <Reference Include="System" />
+    <Reference Include="System.Configuration" />
     <Reference Include="System.Data" />
     <Reference Include="System.Xml" />
     <Reference Include="Microsoft.CSharp" />
@@ -57,6 +58,7 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="TextToSpeech\CognitiveServicesTTS.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>

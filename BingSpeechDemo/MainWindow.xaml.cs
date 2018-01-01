@@ -1,67 +1,130 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 using Microsoft.CognitiveServices.SpeechRecognition;
+using System.ComponentModel;
+using System.Configuration;
+using System.IO;
+using System.Media;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using BingSpeechDemo.TextToSpeech;
 
 namespace BingSpeechDemo
 {
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
-    public partial class MainWindow : Window
+    public partial class MainWindow : Window, INotifyPropertyChanged
     {
+        public event PropertyChangedEventHandler PropertyChanged;
 
         private MicrophoneRecognitionClient micClient;
 
         private string DefaultLocale = "en-US";
 
-        private string SubscriptionKey = "";
+        private string SubscriptionKey = ConfigurationManager.AppSettings["SpeechKey"];
 
-        private string AuthenticationUri = "";
+        private string AuthenticationUri = "https://api.cognitive.microsoft.com/sts/v1.0/issueToken";
+
+        private string accessToken;
 
         public MainWindow()
         {
             InitializeComponent();
+            InitTTS();
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            if (null != micClient)
+            {
+                micClient.Dispose();
+            }
+            base.OnClosed(e);
         }
 
 
+        public void InitTTS()
+        {
+            Authentication auth = new Authentication(SubscriptionKey);
+            accessToken = auth.GetAccessToken();
+            WriteLine(accessToken);
+        }
 
+      
         private void StartButton_Click(object sender, RoutedEventArgs e)
         {
-            this.CreateMicrophoneRecoClient();
-            this.micClient.StartMicAndRecognition();
+            CreateMicrophoneRecoClient();
+            micClient.StartMicAndRecognition();
+        }
+
+        private void Speak_Click(object sender, RoutedEventArgs e)
+        {
+            string requestUri = "https://speech.platform.bing.com/synthesize";
+
+            var cortana = new Synthesize();
+
+            cortana.OnAudioAvailable += PlayAudio;
+            cortana.OnError += ErrorHandler;
+
+            // Reuse Synthesize object to minimize latency
+            cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
+            {
+                RequestUri = new Uri(requestUri),
+                // Text to be spoken.
+                Text = _convertedText.Text,
+                VoiceType = Gender.Female,
+                // Refer to the documentation for complete list of supported locales.
+                Locale = "en-US",
+                // You can also customize the output voice. Refer to the documentation to view the different
+                // voices that the TTS service can output.
+                VoiceName = "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)",
+                // Service can return audio in different output format.
+                OutputFormat = AudioOutputFormat.Riff16Khz16BitMonoPcm,
+                AuthorizationToken = "Bearer " + accessToken,
+            }).Wait();
+
+        }
+
+        private static void PlayAudio(object sender, GenericEventArgs<Stream> args)
+        {
+            Console.WriteLine(args.EventData);
+
+            // For SoundPlayer to be able to play the wav file, it has to be encoded in PCM.
+            // Use output audio format AudioOutputFormat.Riff16Khz16BitMonoPcm to do that.
+            SoundPlayer player = new SoundPlayer(args.EventData);
+            player.PlaySync();
+            args.EventData.Dispose();
+        }
+
+        private static void ErrorHandler(object sender, GenericEventArgs<Exception> e)
+        {
+            Console.WriteLine("Unable to complete the TTS request: [{0}]", e.ToString());
         }
 
 
+
+
+
+// Speech to text
 
         private void CreateMicrophoneRecoClient()
         {
-            this.micClient = SpeechRecognitionServiceFactory.CreateMicrophoneClient(
+            micClient = SpeechRecognitionServiceFactory.CreateMicrophoneClient(
                 SpeechRecognitionMode.LongDictation,
-                this.DefaultLocale,
-                this.SubscriptionKey);
-            this.micClient.AuthenticationUri = this.AuthenticationUri;
-
+                DefaultLocale,
+                SubscriptionKey);
+            micClient.AuthenticationUri = AuthenticationUri;
+           
             // Event handlers for speech recognition results
-            this.micClient.OnMicrophoneStatus += this.OnMicrophoneStatus;
+            micClient.OnMicrophoneStatus += OnMicrophoneStatus;
 
-            this.micClient.OnPartialResponseReceived += this.OnPartialResponseReceivedHandler;
+            micClient.OnPartialResponseReceived += OnPartialResponseReceivedHandler;
 
-            this.micClient.OnResponseReceived += this.OnMicDictationResponseReceivedHandler;
+            micClient.OnResponseReceived += OnMicDictationResponseReceivedHandler;
 
-            this.micClient.OnConversationError += this.OnConversationErrorHandler;
+            micClient.OnConversationError += OnConversationErrorHandler;
         }
 
 
@@ -92,9 +155,11 @@ namespace BingSpeechDemo
         /// <param name="e">The <see cref="PartialSpeechResponseEventArgs"/> instance containing the event data.</param>
         private void OnPartialResponseReceivedHandler(object sender, PartialSpeechResponseEventArgs e)
         {
-            this.WriteLine("--- Partial result received by OnPartialResponseReceivedHandler() ---");
-            this.WriteLine("{0}", e.PartialResult);
-            this.WriteLine();
+            WriteSpeech(e.PartialResult);
+
+            WriteLine("--- Partial result received by OnPartialResponseReceivedHandler() ---");
+            WriteLine("{0}", e.PartialResult);
+            WriteLine();
         }
 
         /// <summary>
@@ -104,9 +169,11 @@ namespace BingSpeechDemo
         /// <param name="e">The <see cref="SpeechResponseEventArgs"/> instance containing the event data.</param>
         private void OnMicDictationResponseReceivedHandler(object sender, SpeechResponseEventArgs e)
         {
-            this.WriteLine("--- OnMicDictationResponseReceivedHandler ---");
+            WriteLine("--- OnMicDictationResponseReceivedHandler ---");
             if (e.PhraseResponse.RecognitionStatus == RecognitionStatus.EndOfDictation ||
-                e.PhraseResponse.RecognitionStatus == RecognitionStatus.DictationEndSilenceTimeout)
+                e.PhraseResponse.RecognitionStatus == RecognitionStatus.DictationEndSilenceTimeout ||
+                e.PhraseResponse.RecognitionStatus == RecognitionStatus.RecognitionSuccess
+                )
             {
                 Dispatcher.Invoke(
                     (Action)(() =>
@@ -114,14 +181,17 @@ namespace BingSpeechDemo
                         // we got the final result, so it we can end the mic reco.  No need to do this
                         // for dataReco, since we already called endAudio() on it as soon as we were done
                         // sending all the data.
-                        this.micClient.EndMicAndRecognition();
-
-                      //  this._startButton.IsEnabled = true;
-                       // this._radioGroup.IsEnabled = true;
+                        micClient.EndMicAndRecognition();
+                        _startButton.IsEnabled = true;
+                       
                     }));
             }
 
-            this.WriteResponseResult(e);
+            if (e.PhraseResponse.Results.Length > 0)
+            {
+                WriteSpeech(e.PhraseResponse.Results.First().DisplayText);
+            }
+            WriteResponseResult(e);
         }
 
         // <summary>
@@ -133,14 +203,13 @@ namespace BingSpeechDemo
         {
             Dispatcher.Invoke(() =>
             {
-              //  _startButton.IsEnabled = true;
-              //  _radioGroup.IsEnabled = true;
+                _startButton.IsEnabled = true;
             });
 
-            this.WriteLine("--- Error received by OnConversationErrorHandler() ---");
-            this.WriteLine("Error code: {0}", e.SpeechErrorCode.ToString());
-            this.WriteLine("Error text: {0}", e.SpeechErrorText);
-            this.WriteLine();
+            WriteLine("--- Error received by OnConversationErrorHandler() ---");
+            WriteLine("Error code: {0}", e.SpeechErrorCode.ToString());
+            WriteLine("Error text: {0}", e.SpeechErrorText);
+            WriteLine();
         }
 
 
@@ -160,21 +229,21 @@ namespace BingSpeechDemo
         {
             if (e.PhraseResponse.Results.Length == 0)
             {
-                this.WriteLine("No phrase response is available.");
+                WriteLine("No phrase response is available.");
             }
             else
             {
-                this.WriteLine("********* Final n-BEST Results *********");
+                WriteLine("********* Final n-BEST Results *********");
                 for (int i = 0; i < e.PhraseResponse.Results.Length; i++)
                 {
-                    this.WriteLine(
+                    WriteLine(
                         "[{0}] Confidence={1}, Text=\"{2}\"",
                         i,
                         e.PhraseResponse.Results[i].Confidence,
                         e.PhraseResponse.Results[i].DisplayText);
                 }
 
-                this.WriteLine();
+                WriteLine();
             }
         }
 
@@ -183,7 +252,7 @@ namespace BingSpeechDemo
         /// </summary>
         private void WriteLine()
         {
-            this.WriteLine(string.Empty);
+            WriteLine(string.Empty);
         }
 
         /// <summary>
@@ -193,16 +262,24 @@ namespace BingSpeechDemo
         /// <param name="args">The arguments.</param>
         private void WriteLine(string format, params object[] args)
         {
+            
             var formattedStr = string.Format(format, args);
-            Trace.WriteLine(formattedStr);
+          //  Trace.WriteLine(formattedStr);
             Dispatcher.Invoke(() =>
             {
                 _logText.Text += (formattedStr + "\n");
                 _logText.ScrollToEnd();
             });
+            
         }
 
-
+        private void WriteSpeech(string text)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                _convertedText.Text = text;
+            });
+        }
 
     }
 }
